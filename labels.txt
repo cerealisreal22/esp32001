@@ -1,2 +1,2 @@
-eyes_open
-eyes_close
+0 eyes_open
+1 eyes_close
