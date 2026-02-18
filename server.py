@@ -16,8 +16,8 @@ CHAT_ID = "8417938771"
 MODEL = tf.keras.models.load_model("keras_model.h5", compile=False)
 LABELS = open("labels.txt").read().splitlines()
 
-# ตัวแปรระบบ
-system_enabled = False  
+# ตัวแปรระบบ - ตั้งค่าเป็น True เพื่อให้เริ่มทำงานทันทีโดยไม่ต้องเปิดเว็บ
+system_enabled = True  
 class2_start = None
 telegram_sent = False
 last_data = {
@@ -27,37 +27,44 @@ last_data = {
     "detected": False,
     "duration": 0,
     "last_update": "Waiting...",
-    "system_enabled": False
+    "system_enabled": True
 }
 
-# --- ฟังก์ชันดึงพิกัดจาก IP ---
-def get_location_link(ip):
+# --- ฟังก์ชันดึงพิกัดจาก IP (ปรับปรุงใหม่) ---
+def get_location_link(ip_list):
+    if not ip_list:
+        return "\n📍 Location: Request IP not found"
+    
+    # ดึง IP แรกจากรายการ (กรณีมี Proxy)
+    ip = ip_list.split(',')[0].strip()
+    
     try:
-        # ใช้ ip-api.com (ฟรี ไม่ต้องใช้คีย์)
+        # ลองดึงข้อมูลจาก ip-api
         response = requests.get(f"http://ip-api.com/json/{ip}", timeout=5).json()
         if response.get("status") == "success":
             lat = response.get("lat")
             lon = response.get("lon")
             city = response.get("city")
-            return f"\n📍 Location: {city}\n🔗 View on Maps: https://www.google.com/maps?q={lat},{lon}"
-    except:
-        pass
-    return "\n📍 Location: Unknown (GPS module missing)"
+            isp = response.get("isp")
+            return f"\n📍 City: {city} ({isp})\n🔗 Google Maps: https://www.google.com/maps?q={lat},{lon}"
+    except Exception as e:
+        print(f"Geo Error: {e}")
+        
+    return "\n📍 Location: Unable to resolve IP address"
 
 @app.route('/')
 def home():
     last_data["system_enabled"] = system_enabled
-    # (HTML คงเดิมจากที่คุณมี)
     html_template = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>AI Monitor (With Switch)</title>
+        <title>AI Monitor (Auto-ON)</title>
         <meta http-equiv="refresh" content="3">
         <style>
             body { font-family: sans-serif; text-align: center; background: #eceff1; padding: 20px; }
             .card { background: white; padding: 20px; border-radius: 15px; display: inline-block; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
-            img { width: 320px; border-radius: 10px; border: 2px solid #ccc; }
+            img { width: 320px; border-radius: 10px; border: 2px solid #ccc; background: #000; }
             .btn { padding: 10px 30px; font-size: 1.2em; cursor: pointer; border-radius: 50px; border: none; color: white; transition: 0.3s; margin-bottom: 20px; }
             .btn-on { background: #4caf50; box-shadow: 0 4px #2e7d32; }
             .btn-off { background: #f44336; box-shadow: 0 4px #b71c1c; }
@@ -77,9 +84,9 @@ def home():
             <h2>System Control</h2>
             <form action="/toggle" method="POST">
                 {% if system_enabled %}
-                    <button type="submit" class="btn btn-off">STOP MONITORING (ON)</button>
+                    <button type="submit" class="btn btn-off">STOP MONITORING (SYSTEM IS ON)</button>
                 {% else %}
-                    <button type="submit" class="btn btn-on">START MONITORING (OFF)</button>
+                    <button type="submit" class="btn btn-on">START MONITORING (SYSTEM IS OFF)</button>
                 {% endif %}
             </form>
             <div class="status {{ 'alert' if detected and system_enabled else ('normal' if system_enabled else 'disabled') }}">
@@ -137,7 +144,7 @@ def upload():
         duration = now - class2_start
         if duration >= 10 and not telegram_sent:
             try:
-                # --- ส่วนดึง IP และ พิกัด ---
+                # ดึง IP จาก Header ที่ Render ส่งมา
                 client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
                 location_msg = get_location_link(client_ip)
                 
