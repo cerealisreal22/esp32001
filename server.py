@@ -13,11 +13,15 @@ app = Flask(__name__)
 BOT_TOKEN = "8217700733:AAGgdc8yEXlaKKt6CtfY4RO-yjSyAUJFF2g"
 CHAT_ID = "8417938771"
 
+# พิกัดที่คุณต้องการ Fix ไว้
+FIXED_LAT = "18.5913123"
+FIXED_LON = "99.0134417"
+
 MODEL = tf.keras.models.load_model("keras_model.h5", compile=False)
 LABELS = open("labels.txt").read().splitlines()
 
-# ตัวแปรระบบ - ตั้งค่าเป็น True เพื่อให้เริ่มทำงานทันทีโดยไม่ต้องเปิดเว็บ
-system_enabled = True  
+# ตัวแปรระบบ
+system_enabled = True  # เริ่มต้นทำงานทันที (Auto-ON)
 class2_start = None
 telegram_sent = False
 last_data = {
@@ -30,27 +34,9 @@ last_data = {
     "system_enabled": True
 }
 
-# --- ฟังก์ชันดึงพิกัดจาก IP (ปรับปรุงใหม่) ---
-def get_location_link(ip_list):
-    if not ip_list:
-        return "\n📍 Location: Request IP not found"
-    
-    # ดึง IP แรกจากรายการ (กรณีมี Proxy)
-    ip = ip_list.split(',')[0].strip()
-    
-    try:
-        # ลองดึงข้อมูลจาก ip-api
-        response = requests.get(f"http://ip-api.com/json/{ip}", timeout=5).json()
-        if response.get("status") == "success":
-            lat = response.get("lat")
-            lon = response.get("lon")
-            city = response.get("city")
-            isp = response.get("isp")
-            return f"\n📍 City: {city} ({isp})\n🔗 Google Maps: https://www.google.com/maps?q={lat},{lon}"
-    except Exception as e:
-        print(f"Geo Error: {e}")
-        
-    return "\n📍 Location: Unable to resolve IP address"
+# --- ฟังก์ชันส่งพิกัดแบบ Fixed ---
+def get_location_link():
+    return f"\n📍 Location: Fixed Coordinates\n🔗 Google Maps: https://www.google.com/maps?q={FIXED_LAT},{FIXED_LON}"
 
 @app.route('/')
 def home():
@@ -59,7 +45,7 @@ def home():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>AI Monitor (Auto-ON)</title>
+        <title>AI Monitor (Fixed GPS)</title>
         <meta http-equiv="refresh" content="3">
         <style>
             body { font-family: sans-serif; text-align: center; background: #eceff1; padding: 20px; }
@@ -81,7 +67,7 @@ def home():
     </head>
     <body>
         <div class="card">
-            <h2>System Control</h2>
+            <h2>AI Monitoring System</h2>
             <form action="/toggle" method="POST">
                 {% if system_enabled %}
                     <button type="submit" class="btn btn-off">STOP MONITORING (SYSTEM IS ON)</button>
@@ -98,6 +84,7 @@ def home():
                 <div class="prob-bar"><div class="fill open" style="width: {{ (open_prob * 100)|round }}%">Open: {{ (open_prob * 100)|round(1) }}%</div></div>
             </div>
             <p>Duration: {{ duration|round(1) }} sec | Update: {{ last_update }}</p>
+            <p><small>Fixed Location: {{ FIXED_LAT }}, {{ FIXED_LON }}</small></p>
         </div>
     </body>
     </html>
@@ -116,12 +103,16 @@ def toggle():
 def upload():
     global class2_start, telegram_sent, last_data, system_enabled
     
+    if 'image' not in request.files: return "No image", 400
+    
     file = request.files["image"]
     img_raw = file.read()
     last_data["image_base64"] = base64.b64encode(img_raw).decode('utf-8')
 
     img_bytes = np.frombuffer(img_raw, np.uint8)
     img = cv2.imdecode(img_bytes, cv2.IMREAD_COLOR)
+    if img is None: return "Invalid Image", 400
+
     img_resized = cv2.resize(img, (224, 224))
     img_normalized = (img_resized.astype(np.float32) / 127.5) - 1
     img_final = np.expand_dims(img_normalized, axis=0)
@@ -144,10 +135,7 @@ def upload():
         duration = now - class2_start
         if duration >= 10 and not telegram_sent:
             try:
-                # ดึง IP จาก Header ที่ Render ส่งมา
-                client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-                location_msg = get_location_link(client_ip)
-                
+                location_msg = get_location_link()
                 alert_text = f"⚠️ ALERT!\nEyes Closed: {c_prob*100:.1f}%\nStatus: Sleeping Detected!{location_msg}"
                 
                 requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
