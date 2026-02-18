@@ -9,19 +9,18 @@ import base64
 
 app = Flask(__name__)
 
-# ===== CONFIG =====
+
 BOT_TOKEN = "8217700733:AAGgdc8yEXlaKKt6CtfY4RO-yjSyAUJFF2g"
 CHAT_ID = "8417938771"
 
-# พิกัดที่คุณต้องการ Fix ไว้
+
 FIXED_LAT = "18.5913123"
 FIXED_LON = "99.0134417"
 
 MODEL = tf.keras.models.load_model("keras_model.h5", compile=False)
 LABELS = open("labels.txt").read().splitlines()
 
-# ตัวแปรระบบ
-system_enabled = True  # เริ่มต้นทำงานทันที (Auto-ON)
+system_enabled = True  
 class2_start = None
 telegram_sent = False
 last_data = {
@@ -34,9 +33,9 @@ last_data = {
     "system_enabled": True
 }
 
-# --- ฟังก์ชันส่งพิกัดแบบ Fixed ---
+
 def get_location_link():
-    return f"\n📍 Location: Fixed Coordinates\n🔗 Google Maps: https://www.google.com/maps?q={FIXED_LAT},{FIXED_LON}"
+    return f"\n📍 Location: Coordinates\n🔗 Google Maps: https://www.google.com/maps?q={FIXED_LAT},{FIXED_LON}"
 
 @app.route('/')
 def home():
@@ -84,7 +83,6 @@ def home():
                 <div class="prob-bar"><div class="fill open" style="width: {{ (open_prob * 100)|round }}%">Open: {{ (open_prob * 100)|round(1) }}%</div></div>
             </div>
             <p>Duration: {{ duration|round(1) }} sec | Update: {{ last_update }}</p>
-            <p><small>Fixed Location: {{ FIXED_LAT }}, {{ FIXED_LON }}</small></p>
         </div>
     </body>
     </html>
@@ -158,3 +156,4 @@ def upload():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+
