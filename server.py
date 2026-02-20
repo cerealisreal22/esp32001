@@ -9,17 +9,17 @@ import base64
 
 app = Flask(__name__)
 
-
+# ===== ตั้งค่าระบบ (CONFIG) =====
 BOT_TOKEN = "8217700733:AAGgdc8yEXlaKKt6CtfY4RO-yjSyAUJFF2g"
 CHAT_ID = "8417938771"
-
-
 FIXED_LAT = "18.5913123"
 FIXED_LON = "99.0134417"
 
+# โหลดโมดูล AI
 MODEL = tf.keras.models.load_model("keras_model.h5", compile=False)
 LABELS = open("labels.txt").read().splitlines()
 
+# ตัวแปรสถานะ
 system_enabled = True  
 class2_start = None
 telegram_sent = False
@@ -33,7 +33,6 @@ last_data = {
     "system_enabled": True
 }
 
-
 def get_location_link():
     return f"\n📍 Location: Coordinates\n🔗 Google Maps: https://www.google.com/maps?q={FIXED_LAT},{FIXED_LON}"
 
@@ -44,7 +43,7 @@ def home():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>AI Monitor (Fixed GPS)</title>
+        <title>AI Monitor System</title>
         <meta http-equiv="refresh" content="3">
         <style>
             body { font-family: sans-serif; text-align: center; background: #eceff1; padding: 20px; }
@@ -100,7 +99,6 @@ def toggle():
 @app.route("/upload", methods=["POST"])
 def upload():
     global class2_start, telegram_sent, last_data, system_enabled
-    
     if 'image' not in request.files: return "No image", 400
     
     file = request.files["image"]
@@ -117,43 +115,32 @@ def upload():
 
     pred = MODEL.predict(img_final)[0]
     now = time.time()
-    
-    probs = {}
-    for i, p in enumerate(pred):
-        label = LABELS[i].strip().split(' ', 1)[-1]
-        probs[label] = float(p)
+    probs = {LABELS[i].strip().split(' ', 1)[-1]: float(p) for i, p in enumerate(pred)}
 
     c_prob = probs.get("eyes_close", 0)
     o_prob = probs.get("eyes_open", 0)
     detected = c_prob >= 0.7
     duration = 0
+    response_msg = "OK"
 
     if system_enabled and detected:
         if class2_start is None: class2_start = now
         duration = now - class2_start
-        if duration >= 10 and not telegram_sent:
-            try:
-                location_msg = get_location_link()
-                alert_text = f"⚠️ ALERT!\nEyes Closed: {c_prob*100:.1f}%\nStatus: Sleeping Detected!{location_msg}"
-                
-                requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
-                              json={"chat_id": CHAT_ID, "text": alert_text}, timeout=5)
-                telegram_sent = True
-            except Exception as e:
-                print(f"Telegram Error: {e}")
+        if duration >= 10:
+            response_msg = "ALARM_ON" # ส่งคำสั่งปลุกกลับไป
+            if not telegram_sent:
+                try:
+                    alert_text = f"⚠️ ALERT!\nEyes Closed: {c_prob*100:.1f}%\nStatus: Sleeping Detected!{get_location_link()}"
+                    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
+                                  json={"chat_id": CHAT_ID, "text": alert_text}, timeout=5)
+                    telegram_sent = True
+                except: pass
     elif not detected or not system_enabled:
         class2_start = None
         telegram_sent = False
 
-    last_data.update({
-        "closed_prob": c_prob,
-        "open_prob": o_prob,
-        "detected": detected,
-        "duration": duration,
-        "last_update": time.strftime("%H:%M:%S")
-    })
-    return "OK"
+    last_data.update({"closed_prob": c_prob, "open_prob": o_prob, "detected": detected, "duration": duration, "last_update": time.strftime("%H:%M:%S")})
+    return response_msg
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
-
