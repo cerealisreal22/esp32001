@@ -130,7 +130,7 @@ def upload():
             response_msg = "ALARM_ON" # ส่งคำสั่งปลุกกลับไป
             if not telegram_sent:
                 try:
-                    alert_text = f"⚠️ ALERT!\nEyes Closed: {c_prob*100:.1f}%\nStatus: Sleeping Detected!{get_location_link()}"
+                    alert_text = f"⚠️ ALERT!\nEyes Closed: {c_prob*100:.1f}%\nStatus: Sleeping Detected!"
                     requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
                                   json={"chat_id": CHAT_ID, "text": alert_text}, timeout=5)
                     telegram_sent = True
@@ -144,3 +144,4 @@ def upload():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+
