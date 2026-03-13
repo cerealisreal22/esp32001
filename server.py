@@ -9,8 +9,8 @@ import base64
 
 app = Flask(__name__)
 
-BOT_TOKEN = "8217700733:AAGgdc8yEXlaKKt6CtfY4RO-yjSyAUJFF2g"
-CHAT_ID = "8417938771"
+BOT_TOKEN = "8689296330:AAHtNUu2raYA2vWa6JNzxLg3etAO_eHqvBI"
+CHAT_ID = "8222731523"
 FIXED_LAT = "18.5913123"
 FIXED_LON = "99.0134417"
 
@@ -141,5 +141,6 @@ def upload():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+
 
 
