@@ -123,7 +123,7 @@ def upload():
     if system_enabled and detected:
         if class2_start is None: class2_start = now
         duration = now - class2_start
-        if duration >= 10:
+        if duration >= 5:
             response_msg = "ALARM_ON" # ส่งคำสั่งปลุกกลับไป
             if not telegram_sent:
                 try:
@@ -141,6 +141,7 @@ def upload():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+
 
 
 
