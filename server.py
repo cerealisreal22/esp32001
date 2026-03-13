@@ -9,17 +9,14 @@ import base64
 
 app = Flask(__name__)
 
-# ===== ตั้งค่าระบบ (CONFIG) =====
 BOT_TOKEN = "8217700733:AAGgdc8yEXlaKKt6CtfY4RO-yjSyAUJFF2g"
 CHAT_ID = "8417938771"
 FIXED_LAT = "18.5913123"
 FIXED_LON = "99.0134417"
 
-# โหลดโมดูล AI
 MODEL = tf.keras.models.load_model("keras_model.h5", compile=False)
 LABELS = open("labels.txt").read().splitlines()
 
-# ตัวแปรสถานะ
 system_enabled = True  
 class2_start = None
 telegram_sent = False
@@ -144,4 +141,5 @@ def upload():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+
 
