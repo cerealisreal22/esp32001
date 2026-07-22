@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, render_template_string
 import cv2
 import numpy as np
 import mediapipe as mp
+from mediapipe.python.solutions import face_mesh as mp_face_mesh
 import time
 import json
 import os
@@ -9,7 +10,6 @@ import os
 app = Flask(__name__)
 
 # MediaPipe Setup
-mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh(
     max_num_faces=1,
     refine_landmarks=True,
