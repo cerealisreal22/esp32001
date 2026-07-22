@@ -1,2 +1,0 @@
-0 eyes_open
-1 eyes_close
