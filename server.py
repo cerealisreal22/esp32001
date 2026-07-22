@@ -5,13 +5,13 @@ import time
 import json
 import os
 
-# ✅ แก้ไขการ Import MediaPipe ให้รันบน Render ได้สมบูรณ์
+# ✅ เรียกใช้ MediaPipe แบบมาตรฐาน (จะใช้งานได้ทันทีเมื่อมี apt.txt)
 import mediapipe as mp
-from mediapipe.solutions import face_mesh as mp_face_mesh
 
 app = Flask(__name__)
 
 # Initialize MediaPipe FaceMesh
+mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh(
     max_num_faces=1,
     refine_landmarks=True,
