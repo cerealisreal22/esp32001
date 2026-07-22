@@ -1,147 +1,253 @@
-from flask import Flask, request, jsonify, render_template_string, redirect, url_for
-import tensorflow as tf
-import numpy as np
+from flask import Flask, request, jsonify, render_template_string
 import cv2
+import numpy as np
+import mediapipe as mp
 import time
-import requests
+import json
 import os
-import base64
 
 app = Flask(__name__)
 
-BOT_TOKEN = "8689296330:AAHtNUu2raYA2vWa6JNzxLg3etAO_eHqvBI"
-CHAT_ID = "8222731523"
-FIXED_LAT = "18.5913123"
-FIXED_LON = "99.0134417"
+# MediaPipe Setup
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(
+    max_num_faces=1,
+    refine_landmarks=True,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
+)
 
-MODEL = tf.keras.models.load_model("keras_model.h5", compile=False)
-LABELS = open("labels.txt").read().splitlines()
+# Landmark indices for eyes
+LEFT_EYE = [362, 385, 387, 263, 373, 380]
+RIGHT_EYE = [33, 160, 158, 133, 153, 144]
 
-system_enabled = True  
-class2_start = None
-telegram_sent = False
-last_data = {
-    "image_base64": "",
-    "closed_prob": 0,
-    "open_prob": 0,
-    "detected": False,
-    "duration": 0,
-    "last_update": "Waiting...",
-    "system_enabled": True
+# Preset Data Structure
+PRESETS_FILE = 'presets.json'
+default_presets = {
+    "1": {"name": "Driver 1", "ear_open": 0.30, "ear_closed": 0.12},
+    "2": {"name": "Driver 2", "ear_open": 0.30, "ear_closed": 0.12},
+    "3": {"name": "Driver 3", "ear_open": 0.30, "ear_closed": 0.12}
 }
 
-def get_location_link():
-    return f"\n📍 Location: Coordinates\n🔗 Google Maps: https://www.google.com/maps?q={FIXED_LAT},{FIXED_LON}"
+if os.path.exists(PRESETS_FILE):
+    with open(PRESETS_FILE, 'r') as f:
+        presets = json.load(f)
+else:
+    presets = default_presets
+
+state = {
+    "active_preset": "1",
+    "eye_closure_pct": 0,
+    "closed_duration": 0.0,
+    "alarm_active": False,
+    "last_closed_time": None,
+    "latest_ear": 0.0,
+    "calibrating": False
+}
+
+def calculate_ear(landmarks, eye_indices, img_w, img_h):
+    pts = [np.array([landmarks[i].x * img_w, landmarks[i].y * img_h]) for i in eye_indices]
+    v1 = np.linalg.norm(pts[1] - pts[5])
+    v2 = np.linalg.norm(pts[2] - pts[4])
+    h = np.linalg.norm(pts[0] - pts[3])
+    if h == 0: return 0.0
+    return (v1 + v2) / (2.0 * h)
 
 @app.route('/')
-def home():
-    last_data["system_enabled"] = system_enabled
-    html_template = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>AI Monitor System</title>
-        <meta http-equiv="refresh" content="3">
-        <style>
-            body { font-family: sans-serif; text-align: center; background: #eceff1; padding: 20px; }
-            .card { background: white; padding: 20px; border-radius: 15px; display: inline-block; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
-            img { width: 320px; border-radius: 10px; border: 2px solid #ccc; background: #000; }
-            .btn { padding: 10px 30px; font-size: 1.2em; cursor: pointer; border-radius: 50px; border: none; color: white; transition: 0.3s; margin-bottom: 20px; }
-            .btn-on { background: #4caf50; box-shadow: 0 4px #2e7d32; }
-            .btn-off { background: #f44336; box-shadow: 0 4px #b71c1c; }
-            .prob-bar { margin: 10px 0; text-align: left; background: #eee; border-radius: 5px; overflow: hidden; }
-            .fill { height: 20px; line-height: 20px; color: white; padding-left: 10px; font-size: 0.8em; transition: 0.5s; }
-            .closed { background: #f44336; }
-            .open { background: #4caf50; }
-            .status { font-weight: bold; margin-bottom: 15px; padding: 10px; border-radius: 5px; }
-            .alert { background: #ffcdd2; color: #b71c1c; animation: blink 1s infinite; }
-            .normal { background: #c8e6c9; color: #1b5e20; }
-            .disabled { background: #e0e0e0; color: #757575; }
-            @keyframes blink { 50% { opacity: 0.6; } }
-        </style>
-    </head>
-    <body>
-        <div class="card">
-            <h2>AI Monitoring System</h2>
-            <form action="/toggle" method="POST">
-                {% if system_enabled %}
-                    <button type="submit" class="btn btn-off">STOP MONITORING (SYSTEM IS ON)</button>
-                {% else %}
-                    <button type="submit" class="btn btn-on">START MONITORING (SYSTEM IS OFF)</button>
-                {% endif %}
-            </form>
-            <div class="status {{ 'alert' if detected and system_enabled else ('normal' if system_enabled else 'disabled') }}">
-                {% if not system_enabled %} SYSTEM PAUSED {% elif detected %} ⚠️ SLEEPING DETECTED {% else %} ✅ MONITORING: AWAKE {% endif %}
-            </div>
-            <img src="data:image/jpeg;base64,{{ image_base64 }}">
-            <div style="margin-top:15px;">
-                <div class="prob-bar"><div class="fill closed" style="width: {{ (closed_prob * 100)|round }}%">Closed: {{ (closed_prob * 100)|round(1) }}%</div></div>
-                <div class="prob-bar"><div class="fill open" style="width: {{ (open_prob * 100)|round }}%">Open: {{ (open_prob * 100)|round(1) }}%</div></div>
-            </div>
-            <p>Duration: {{ duration|round(1) }} sec | Update: {{ last_update }}</p>
-        </div>
-    </body>
-    </html>
-    """
-    return render_template_string(html_template, **last_data)
+def index():
+    return render_template_string(HTML_UI)
 
-@app.route('/toggle', methods=['POST'])
-def toggle():
-    global system_enabled, class2_start, telegram_sent
-    system_enabled = not system_enabled
-    class2_start = None
-    telegram_sent = False
-    return redirect(url_for('home'))
-
-@app.route("/upload", methods=["POST"])
+@app.route('/upload', methods=['POST'])
 def upload():
-    global class2_start, telegram_sent, last_data, system_enabled
-    if 'image' not in request.files: return "No image", 400
-    
-    file = request.files["image"]
-    img_raw = file.read()
-    last_data["image_base64"] = base64.b64encode(img_raw).decode('utf-8')
+    global state
+    file = request.files.get('image')
+    if not file:
+        return jsonify({"error": "No image"}), 400
 
-    img_bytes = np.frombuffer(img_raw, np.uint8)
-    img = cv2.imdecode(img_bytes, cv2.IMREAD_COLOR)
-    if img is None: return "Invalid Image", 400
+    img_bytes = np.frombuffer(file.read(), np.uint8)
+    frame = cv2.imdecode(img_bytes, cv2.IMREAD_COLOR)
+    if frame is None:
+        return jsonify({"error": "Decode failed"}), 400
 
-    img_resized = cv2.resize(img, (224, 224))
-    img_normalized = (img_resized.astype(np.float32) / 127.5) - 1
-    img_final = np.expand_dims(img_normalized, axis=0)
+    h, w, _ = frame.shape
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = face_mesh.process(rgb_frame)
 
-    pred = MODEL.predict(img_final)[0]
+    current_ear = 0.0
+    closure_pct = 0.0
+
+    if results.multi_face_landmarks:
+        landmarks = results.multi_face_landmarks[0].landmark
+        left_ear = calculate_ear(landmarks, LEFT_EYE, w, h)
+        right_ear = calculate_ear(landmarks, RIGHT_EYE, w, h)
+        current_ear = (left_ear + right_ear) / 2.0
+        state["latest_ear"] = round(current_ear, 4)
+
+        # Calculate Closure % based on active preset
+        p_data = presets[state["active_preset"]]
+        ear_open = p_data["ear_open"]
+        ear_closed = p_data["ear_closed"]
+
+        if ear_open > ear_closed:
+            pct = ((ear_open - current_ear) / (ear_open - ear_closed)) * 100.0
+            closure_pct = max(0.0, min(100.0, pct))
+
+    state["eye_closure_pct"] = round(closure_pct, 1)
+
+    # Drowsiness Logic (Eyes Closed >= 70% for > 10 Seconds)
     now = time.time()
-    probs = {LABELS[i].strip().split(' ', 1)[-1]: float(p) for i, p in enumerate(pred)}
+    if closure_pct >= 70.0:
+        if state["last_closed_time"] is None:
+            state["last_closed_time"] = now
+            state["closed_duration"] = 0.0
+        else:
+            state["closed_duration"] = round(now - state["last_closed_time"], 1)
 
-    c_prob = probs.get("eyes_close", 0)
-    o_prob = probs.get("eyes_open", 0)
-    detected = c_prob >= 0.7
-    duration = 0
-    response_msg = "OK"
+        if state["closed_duration"] >= 10.0:
+            state["alarm_active"] = True
+    else:
+        state["last_closed_time"] = None
+        state["closed_duration"] = 0.0
+        state["alarm_active"] = False
 
-    if system_enabled and detected:
-        if class2_start is None: class2_start = now
-        duration = now - class2_start
-        if duration >= 5:
-            response_msg = "ALARM_ON" # ส่งคำสั่งปลุกกลับไป
-            if not telegram_sent:
-                try:
-                    alert_text = f"⚠️ ALERT!\nEyes Closed: {c_prob*100:.1f}%\nStatus: Sleeping Detected!"
-                    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
-                                  json={"chat_id": CHAT_ID, "text": alert_text}, timeout=5)
-                    telegram_sent = True
-                except: pass
-    elif not detected or not system_enabled:
-        class2_start = None
-        telegram_sent = False
+    return jsonify({
+        "alert": state["alarm_active"],
+        "closure_pct": state["eye_closure_pct"],
+        "duration": state["closed_duration"],
+        "ear": state["latest_ear"]
+    })
 
-    last_data.update({"closed_prob": c_prob, "open_prob": o_prob, "detected": detected, "duration": duration, "last_update": time.strftime("%H:%M:%S")})
-    return response_msg
+@app.route('/api/state', methods=['GET'])
+def get_state():
+    return jsonify({"state": state, "presets": presets})
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+@app.route('/api/select_preset', methods=['POST'])
+def select_preset():
+    p_id = request.json.get('preset_id')
+    if p_id in presets:
+        state["active_preset"] = p_id
+        return jsonify({"success": True})
+    return jsonify({"error": "Invalid preset"}), 400
 
+@app.route('/api/calibrate', methods=['POST'])
+def calibrate():
+    # step: 'open' or 'closed'
+    p_id = state["active_preset"]
+    step = request.json.get('step')
+    if step == 'open':
+        presets[p_id]["ear_open"] = state["latest_ear"]
+    elif step == 'closed':
+        presets[p_id]["ear_closed"] = state["latest_ear"]
 
+    with open(PRESETS_FILE, 'w') as f:
+        json.dump(presets, f)
+    return jsonify({"success": True, "preset": presets[p_id]})
 
+HTML_UI = """
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Driver Drowsiness Monitor</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #121212; color: #fff; text-align: center; margin: 0; padding: 20px; }
+        .card { background: #1e1e1e; border-radius: 12px; padding: 20px; margin: 15px auto; max-width: 500px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        .btn { padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; margin: 5px; font-weight: bold; }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-active { border: 2px solid #fff; box-shadow: 0 0 10px #007bff; }
+        .stat-box { font-size: 2rem; font-weight: bold; margin: 10px 0; }
+        .alert-active { background: #ff0000 !important; animation: blink 0.5s infinite alternate; }
+        @keyframes blink { from { opacity: 1; } to { opacity: 0.5; } }
+    </style>
+</head>
+<body>
+    <h1>🚗 Driver Drowsiness Monitor</h1>
 
+    <div class="card" id="alertCard">
+        <h2>STATUS: <span id="statusText">NORMAL</span></h2>
+        <div class="stat-box">ตาปิด: <span id="pctText">0</span>%</div>
+        <div>หลับตาต่อเนื่อง: <span id="durText">0</span> / 10 วินาที</div>
+        <div>Current EAR: <span id="earText">0.00</span></div>
+    </div>
+
+    <div class="card">
+        <h3>เลือก Driver Preset</h3>
+        <button class="btn btn-primary" id="p1" onclick="setPreset('1')">Preset 1</button>
+        <button class="btn btn-primary" id="p2" onclick="setPreset('2')">Preset 2</button>
+        <button class="btn btn-primary" id="p3" onclick="setPreset('3')">Preset 3</button>
+    </div>
+
+    <div class="card">
+        <h3>🔧 Calibrate ตาล่าสุด (Preset ปัจจุบัน)</h3>
+        <p>1. นำหน้าเข้าใกล้กล้อง เปิดตาปกติ แล้วกด "บันทึกตอนลืมตา"</p>
+        <button class="btn btn-success" onclick="calibrate('open')">1. บันทึกตอนลืมตา</button>
+        <p>2. ลองหลับตา แล้วกด "บันทึกตอนหลับตา"</p>
+        <button class="btn btn-danger" onclick="calibrate('closed')">2. บันทึกตอนหลับตา</button>
+        <div style="margin-top:10px; font-size:0.9rem; color:#aaa;" id="presetInfo"></div>
+    </div>
+
+    <script>
+        async function updateData() {
+            try {
+                let res = await fetch('/api/state');
+                let data = await res.json();
+                let st = data.state;
+                let ps = data.presets[st.active_preset];
+
+                document.getElementById('pctText').innerText = st.eye_closure_pct;
+                document.getElementById('durText').innerText = st.closed_duration;
+                document.getElementById('earText').innerText = st.latest_ear;
+
+                // Preset Active Styling
+                ['1','2','3'].forEach(id => {
+                    let btn = document.getElementById('p'+id);
+                    if(id === st.active_preset) btn.classList.add('btn-active');
+                    else btn.classList.remove('btn-active');
+                });
+
+                document.getElementById('presetInfo').innerText = 
+                    `Active: ${ps.name} | EAR Open: ${ps.ear_open} | EAR Closed: ${ps.ear_closed}`;
+
+                // Alarm Alert UI
+                let card = document.getElementById('alertCard');
+                let stText = document.getElementById('statusText');
+                if(st.alarm_active) {
+                    card.classList.add('alert-active');
+                    stText.innerText = "⚠️ SLEEPING DETECTED!";
+                } else {
+                    card.classList.remove('alert-active');
+                    stText.innerText = "NORMAL";
+                }
+            } catch(e) {}
+        }
+
+        async function setPreset(id) {
+            await fetch('/api/select_preset', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({preset_id: id})
+            });
+            updateData();
+        }
+
+        async function calibrate(step) {
+            await fetch('/api/calibrate', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({step: step})
+            });
+            alert('Calibrated step: ' + step);
+            updateData();
+        }
+
+        setInterval(updateData, 500);
+    </script>
+</body>
+</html>
+"""
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=10000)
