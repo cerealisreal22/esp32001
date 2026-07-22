@@ -1,15 +1,17 @@
 from flask import Flask, request, jsonify, render_template_string
 import cv2
 import numpy as np
-import mediapipe as mp
-from mediapipe.python.solutions import face_mesh as mp_face_mesh
 import time
 import json
 import os
 
+# ✅ แก้ไขการ Import MediaPipe ให้รันบน Render ได้สมบูรณ์
+import mediapipe as mp
+from mediapipe.solutions import face_mesh as mp_face_mesh
+
 app = Flask(__name__)
 
-# MediaPipe Setup
+# Initialize MediaPipe FaceMesh
 face_mesh = mp_face_mesh.FaceMesh(
     max_num_faces=1,
     refine_landmarks=True,
