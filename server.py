@@ -4,13 +4,11 @@ import numpy as np
 import time
 import json
 import os
-
-# ✅ เรียกใช้ MediaPipe แบบมาตรฐาน (จะใช้งานได้ทันทีเมื่อมี apt.txt)
 import mediapipe as mp
 
 app = Flask(__name__)
 
-# Initialize MediaPipe FaceMesh
+# เรียกใช้ MediaPipe FaceMesh
 mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh(
     max_num_faces=1,
